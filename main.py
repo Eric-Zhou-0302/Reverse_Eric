@@ -78,6 +78,9 @@ print(f"总收益率（复利计算）: {results['compounded_total_returns']:.2%
 print(f"简单年化收益率: {results['simple_annualized_returns']:.2%}")
 print(f"复利年化收益率: {results['compounded_annualized_returns']:.2%}")
 print(f"夏普比率: {results['sharpe_ratio']:.2f}")
+print(f"最大回撤: {results['max_drawdown']:.2%}")
+print(f"总交易对数: {results['num_trades']}")
+print(f'胜率： {results["win_rate"]:.2%}')
 
 # 关闭Exchange，确保日志系统正确关闭
 exchange.close()

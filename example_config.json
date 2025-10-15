@@ -1,4 +1,6 @@
 {
     "data_path": "data/SOLUSDT_train.parquet",
-    "interval": 1
+    "interval": 1,
+    "start_date": "2023-01-01 00:00:00",
+    "end_date": "2023-06-01 00:00:00"
 }

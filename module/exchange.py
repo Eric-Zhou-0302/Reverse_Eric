@@ -2,7 +2,6 @@ import polars as pl
 from datetime import datetime
 from .buffered_logger import BufferedLogger
 import numpy as np
-import pdb
 
 # 订单类
 class Order:
@@ -73,7 +72,7 @@ class Exchange:
         self.limit_order = None
 
         # 记录交易
-        trading_records = {
+        trade = {
             "timestamp": timestamp,
             "order_id": order.order_id,
             "side": order.side,
@@ -84,7 +83,7 @@ class Exchange:
             "position": self.position,
             "realized_pnl": self.realized_pnl
         }
-        self.trades.append(trading_records)
+        self.trades.append(trade)
 
     def get_portfolio_value(self, current_price):
         """计算当前组合价值 = 现金 + 仓位价值"""
@@ -105,7 +104,57 @@ class Exchange:
 
     def set_interval(self, interval):
         self.interval = interval
-        
+    
+    def force_close_position(self, close_price, timestamp=None):
+        """强制平仓函数 - 在交易结束时强制清空所有持仓"""
+        if self.position > 0:
+            # 取消当前未成交订单
+            if self.limit_order:
+                self.logger.info(f"取消未成交订单: {self.limit_order.side.upper()} @ ${self.limit_order.limit_price:.2f}")
+                self.limit_order = None
+            
+            # 强制卖出所有持仓
+            self.order_id_counter += 1
+            quantity = self.position
+            fee = quantity * close_price * self.fee_rate
+            revenue = quantity * close_price - fee
+            self.cash += revenue
+            self.realized_pnl += (close_price - self.position_cost) * quantity - fee
+            
+            # 记录强制平仓日志
+            time_str = timestamp.strftime('%Y-%m-%d %H:%M:%S') if timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.logger.info(f"{time_str} - 【强制平仓】卖出 {quantity:.6f} @ ${close_price:.2f}, 收入 ${revenue:.2f} (含手续费 ${fee:.2f}) - 交易结束强制清仓")
+            
+            # 记录交易记录
+            trade = {
+                "timestamp": timestamp,
+                "order_id": self.order_id_counter,
+                "side": "sell",
+                "price": close_price,
+                "quantity": quantity,
+                "fee": fee,
+                "cash": self.cash,
+                "position": 0,
+                "realized_pnl": self.realized_pnl
+            }
+            self.trades.append(trade)
+            
+            # 清空持仓
+            self.position = 0
+            self.position_cost = 0
+            
+            return True
+        else:
+            # 没有持仓，记录日志
+            time_str = timestamp.strftime('%Y-%m-%d %H:%M:%S') if timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.logger.info(f"{time_str} - 【强制平仓检查】当前无持仓，无需强制平仓")
+            return False
+
+    def close(self):
+        """关闭Exchange，确保日志系统正确关闭"""
+        if hasattr(self, 'logger') and self.logger:
+            self.logger.close()
+
     def calculate_performance_metrics(self):
         """计算回测指标"""
         # 检查是否有净值记录
@@ -141,62 +190,26 @@ class Exchange:
         annualized_volatility = returns.std() * np.sqrt(365 * 24 * 60)
         # 夏普比率
         sharpe_ratio = compounded_annualized_returns / annualized_volatility
+        # 交易对数
+        num_trades = len(self.trades) / 2 
+        # 胜率
+        wins = sum(1 for trade in self.trades if trade['side'] == 'sell' and (trade['realized_pnl'] > 0))
+        win_rate = wins / num_trades if num_trades > 0 else 0
+        # 最大回撤
+        cumulative_returns = performance_metrics["cumulative_net_returns"].to_numpy()
+        peak = np.maximum.accumulate(cumulative_returns)
+        drawdowns = (peak - cumulative_returns) / peak
+        max_drawdown = np.max(drawdowns)
 
+        # 返回所有计算结果
         results = {
             "total_returns": total_returns,
             "compounded_total_returns": compounded_total_returns,
             "simple_annualized_returns": simple_annualized_returns,
             "compounded_annualized_returns": compounded_annualized_returns,
-            "sharpe_ratio": sharpe_ratio
+            "sharpe_ratio": sharpe_ratio,
+            "num_trades": num_trades,
+            "win_rate": win_rate,
+            "max_drawdown": max_drawdown
         }
         return results
-    
-    def force_close_position(self, close_price, timestamp=None):
-        """强制平仓函数 - 在交易结束时强制清空所有持仓"""
-        if self.position > 0:
-            # 取消当前未成交订单
-            if self.limit_order:
-                self.logger.info(f"取消未成交订单: {self.limit_order.side.upper()} @ ${self.limit_order.limit_price:.2f}")
-                self.limit_order = None
-            
-            # 强制卖出所有持仓
-            self.order_id_counter += 1
-            quantity = self.position
-            fee = quantity * close_price * self.fee_rate
-            revenue = quantity * close_price - fee
-            self.cash += revenue
-            self.realized_pnl += (close_price - self.position_cost) * quantity - fee
-            
-            # 记录强制平仓日志
-            time_str = timestamp.strftime('%Y-%m-%d %H:%M:%S') if timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            self.logger.info(f"{time_str} - 【强制平仓】卖出 {quantity:.6f} @ ${close_price:.2f}, 收入 ${revenue:.2f} (含手续费 ${fee:.2f}) - 交易结束强制清仓")
-            
-            # 记录交易记录
-            trading_records = {
-                "timestamp": timestamp,
-                "order_id": self.order_id_counter,
-                "side": "sell",
-                "price": close_price,
-                "quantity": quantity,
-                "fee": fee,
-                "cash": self.cash,
-                "position": 0,
-                "realized_pnl": self.realized_pnl
-            }
-            self.trades.append(trading_records)
-            
-            # 清空持仓
-            self.position = 0
-            self.position_cost = 0
-            
-            return True
-        else:
-            # 没有持仓，记录日志
-            time_str = timestamp.strftime('%Y-%m-%d %H:%M:%S') if timestamp else datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            self.logger.info(f"{time_str} - 【强制平仓检查】当前无持仓，无需强制平仓")
-            return False
-
-    def close(self):
-        """关闭Exchange，确保日志系统正确关闭"""
-        if hasattr(self, 'logger') and self.logger:
-            self.logger.close()
